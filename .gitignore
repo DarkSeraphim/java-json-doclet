@@ -1,0 +1,6 @@
+deps/
+*.jar
+target/
+testsrc/
+testdeps/
+testdocs.json
