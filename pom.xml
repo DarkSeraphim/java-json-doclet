@@ -32,8 +32,8 @@
                 <version>3.0</version>
 
                 <configuration>
-                    <source>${jsondoclet.java.target.version}</source>
-                    <target>${jsondoclet.java.source.version}</target>
+                    <source>9</source>
+                    <target>9</target>
                     <encoding>${jsondoclet.source.encoding}</encoding>
                     <compilerArgument>-Xlint:all</compilerArgument>
                 </configuration>

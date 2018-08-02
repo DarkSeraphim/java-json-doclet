@@ -4,3 +4,5 @@ target/
 testsrc/
 testdeps/
 testdocs.json
+.idea/
+*.iml
