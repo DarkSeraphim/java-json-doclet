@@ -46,6 +46,7 @@ public class DocletOptions
 
         @Override
         public boolean process(String s, List<String> list) {
+            System.out.println("has ofile flag");
             this.file = new File(list.get(0));
             if (!this.file.exists()) {
                 try {
@@ -93,6 +94,7 @@ public class DocletOptions
 
         @Override
         public boolean process(String s, List<String> list) {
+            System.out.println("has append flag");
             this.value = true;
             return true;
         }
@@ -133,6 +135,7 @@ public class DocletOptions
 
         @Override
         public boolean process(String s, List<String> list) {
+            System.out.println("has pretty flag");
             this.value = true;
             return true;
         }

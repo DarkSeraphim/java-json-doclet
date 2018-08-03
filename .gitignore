@@ -6,3 +6,4 @@ testdeps/
 testdocs.json
 .idea/
 *.iml
+deps.js
