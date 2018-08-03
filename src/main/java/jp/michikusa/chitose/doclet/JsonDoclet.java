@@ -15,13 +15,19 @@ import java.io.OutputStream;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
+import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.*;
 import java.util.function.*;
 import javax.lang.model.element.Element;
 import static javax.lang.model.type.TypeKind.*;
+
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.util.ElementFilter;
@@ -100,7 +106,7 @@ public class JsonDoclet implements Doclet {
     return true;
   }
 
-  void write(JsonGenerator g, DocletEnvironment docEnv)
+  private void write(JsonGenerator g, DocletEnvironment docEnv)
       throws IOException {
     g.writeStartObject();
     {
@@ -115,7 +121,7 @@ public class JsonDoclet implements Doclet {
     g.writeEndObject();
   }
 
-  static boolean hasElement(TypeMirror mirror) {
+  private static boolean hasElement(TypeMirror mirror) {
     switch (mirror.getKind()) {
       case DECLARED:
       case ERROR:
@@ -126,7 +132,7 @@ public class JsonDoclet implements Doclet {
     }
   }
 
-  static Element getElement(TypeMirror mirror) {
+  private static Element getElement(TypeMirror mirror) {
     switch (mirror.getKind()) {
       case DECLARED:
         return ((DeclaredType) mirror).asElement();
@@ -139,11 +145,11 @@ public class JsonDoclet implements Doclet {
     }
   }
 
-  static interface UnsafeConsumer<T, E extends Throwable> {
+  interface UnsafeConsumer<T, E extends Throwable> {
     void accept(T t) throws E;
   }
 
-  static <T, E extends Throwable> Consumer<T> unsafe(UnsafeConsumer<T, E> unsafe) {
+  private static <T, E extends Throwable> Consumer<T> unsafe(UnsafeConsumer<T, E> unsafe) {
     return t -> {
       try {
         unsafe.accept(t);
@@ -153,7 +159,15 @@ public class JsonDoclet implements Doclet {
     };
   }
 
-  void writeClass(JsonGenerator g, TypeElement type)
+  private static String toString(List<? extends DocTree> tree) {
+    return tree.stream().map(DocTree::toString).collect(Collectors.joining());
+  }
+
+  private static <T extends U, U extends DocTree> Stream<? extends T> filter(Collection<? extends U> iterable, Class<T> to, DocTree.Kind kind) {
+    return iterable.stream().filter(tree -> tree.getKind() == kind).map(to::cast);
+  }
+
+  private void writeClass(JsonGenerator g, TypeElement type)
       throws IOException {
     g.writeStartObject();
 
@@ -162,8 +176,8 @@ public class JsonDoclet implements Doclet {
       g.writeArrayFieldStart("interfaces");
 
       type.getInterfaces().stream()
-        .filter(i -> hasElement(i))
-        .map(i -> getElement(i))
+        .filter(JsonDoclet::hasElement)
+        .map(JsonDoclet::getElement)
         .filter(TypeElement.class::isInstance)
         .map(TypeElement.class::cast)
         .forEach(unsafe(iface -> g.writeString(iface.getQualifiedName().toString()))); 
@@ -175,27 +189,20 @@ public class JsonDoclet implements Doclet {
         (superType != null && hasElement(superType) ? ((TypeElement) getElement(superType)).getQualifiedName().toString() : ""));
     
     System.out.println("Name was " + type.getQualifiedName());
-    DocCommentTree doc = docTrees.getDocCommentTree(type);
-    if (doc == null) return;
-    String summary = doc.getFullBody().stream().map(DocTree::toString).collect(Collectors.joining(""));
-    doc.getBlockTags().stream().filter(doc -> doc.getKind() == DocTree.Kind.SINCE).findFirst();
-    /*g.writeObjectField("comment_text", doc.commentText);
-    {
-      final Tag tag = get(doc.tags("since"), 0);
+    DocCommentTree docs = docTrees.getDocCommentTree(type);
+    if (docs == null) return;
+    String summary = toString(docs.getFullBody());
+    g.writeObjectField("description", summary);
+    filter(docs.getBlockTags(), SinceTree.class, DocTree.Kind.SINCE).findFirst()
+      .ifPresent(unsafe(since -> {
+        String value = toString(since.getBody());
+        g.writeObjectField("since", value);
+      }));
 
-      g.writeObjectField("since", (tag != null) ? tag.text() : "");
-    }*/
-    Stream<? extends DocTree> seeTags = doc.getBlockTags().stream().filter(doc -> doc.getKind() == DocTree.Kind.SEE);
-    /*
-    {
-      g.writeArrayFieldStart("see");
-
-      for (final SeeTag tag : doc.seeTags()) {
-        g.writeString(tag.referencedClassName());
-      }
-
-      g.writeEndArray();
-    }*/
+    Stream<? extends SeeTree> seeTags = filter(docs.getBlockTags(), SeeTree.class, DocTree.Kind.SEE);
+    g.writeArrayFieldStart("see");
+    seeTags.map(seeTag -> toString(seeTag.getReference()))
+        .forEach(unsafe(g::writeString));
 
     List<? extends Element> members = type.getEnclosedElements();
     List<ExecutableElement> constructors = ElementFilter.constructorsIn(members);
@@ -203,7 +210,7 @@ public class JsonDoclet implements Doclet {
       g.writeArrayFieldStart("constructors");
 
       for (final ExecutableElement ctor : constructors) {
-        writeConstructor(g, ctor);
+        writeExecutable(g, ctor, true);
       }
 
       g.writeEndArray();
@@ -223,7 +230,7 @@ public class JsonDoclet implements Doclet {
       g.writeArrayFieldStart("methods");
 
       for (final ExecutableElement method : methods) {
-        writeExecutable(g, method;
+        writeExecutable(g, method, false);
       }
 
       g.writeEndArray();
@@ -232,13 +239,13 @@ public class JsonDoclet implements Doclet {
     g.writeEndObject();
   }
 
-  static void writeExecutable(JsonGenerator g, ExecutableElement exec, boolean ctor)
+  private void writeExecutable(JsonGenerator g, ExecutableElement exec, boolean ctor)
       throws IOException {
     g.writeStartObject();
 
-    DocCommentTree doc = docTrees.getDocCommentTree(exec);
+    DocCommentTree docs = docTrees.getDocCommentTree(exec);
     g.writeObjectField("name", exec.getSimpleName());
-    g.writeObjectField("comment_text", exec.getFullBody().stream().map(DocTree::toString).collect(Collectors.joining("")));
+    g.writeObjectField("description", toString(docs.getFullBody()));
 
     // TODO: Write static or not
     if (!ctor) {
@@ -246,7 +253,7 @@ public class JsonDoclet implements Doclet {
       g.writeObjectFieldStart("returns");
       g.writeArrayFieldStart("types");
       g.writeString(returnType.toString());
-      g.writeArrayEnd();
+      g.writeEndArray();
       g.writeObjectField("description", "DUMMY");
       g.writeEndObject();
     }
@@ -254,33 +261,50 @@ public class JsonDoclet implements Doclet {
     {
       g.writeArrayFieldStart("parameters");
 
-      Map<String, VariableElement> parameters = ctor.getParameters().stream().collect(Collectors.toMap(VariableElement::getSimpleName, x -> x));
-      for (final VariableElement parameter : ctor.getParameters()) {
-        // TODO: document parameters from javadoc PARAM tags
+      Map<String, ParamTree> parameters =
+          filter(docs.getBlockTags(), ParamTree.class, DocTree.Kind.PARAM)
+              .collect(
+                  Collectors.toMap(tree -> tree.getName().getName().toString(),
+                                   Function.identity()));
+      for (final VariableElement parameter : exec.getParameters()) {
+        String paramName = parameter.getSimpleName().toString();
+        ParamTree doc = parameters.get(paramName);
+
+        g.writeStartObject();
+        g.writeObjectField("name", paramName);
+        g.writeArrayFieldStart("types");
+        g.writeString(((TypeElement) getElement(parameter.asType())).getQualifiedName().toString());
+        g.writeEndArray();
+        if (doc != null) {
+          g.writeObjectField("description", toString(doc.getDescription()));
+        }
+        g.writeEndObject();
       }
 
       g.writeEndArray();
     }
     {
       g.writeArrayFieldStart("throws");
-
-      for () {
-        // TODO: Document throws from javadoc THROWS tags
-      }
-
+      filter(docs.getBlockTags(), ThrowsTree.class, DocTree.Kind.THROWS)
+          .forEach(unsafe(thrown -> {
+            g.writeStartObject();
+            g.writeObjectField("type", thrown.getExceptionName().getSignature());
+            g.writeObjectField("description", toString(thrown.getDescription()));
+            g.writeEndObject();
+          }));
       g.writeEndArray();
     }
 
     g.writeEndObject();
   } 
 
-  static void writeField(JsonGenerator g, FieldDoc doc)
-      throws IOException {
+  private void writeField(JsonGenerator g, VariableElement field) throws IOException {
     g.writeStartObject();
 
-    g.writeObjectField("name", doc.name());
-    g.writeObjectField("comment_text", doc.commentText());
-    g.writeObjectField("type", doc.type().qualifiedTypeName());
+    DocCommentTree docs = this.docTrees.getDocCommentTree(field);
+    g.writeObjectField("name", field.getSimpleName().toString());
+    g.writeObjectField("description", toString((docs.getFullBody())));
+    g.writeObjectField("type", ((TypeElement) getElement(field.asType())).getQualifiedName().toString());
 
     g.writeEndObject();
   }
